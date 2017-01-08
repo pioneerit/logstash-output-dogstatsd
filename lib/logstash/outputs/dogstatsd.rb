@@ -89,7 +89,7 @@ class LogStash::Outputs::Dogstatsd < LogStash::Outputs::Base
 
     metric_opts = {
       :sample_rate => @sample_rate,
-      :tags => @metric_tags.map { |t| event.sprintf(t) }
+      :tags => @metric_tags.collect { |t| event.sprintf(t) }
     }
 
     @increment.each do |metric|
