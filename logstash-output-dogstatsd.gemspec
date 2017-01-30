@@ -22,10 +22,7 @@ Gem::Specification.new do |s|
   # Gem dependencies
   s.add_runtime_dependency "logstash-core-plugin-api", ">= 1.60", "<= 2.99"
   s.add_runtime_dependency 'logstash-input-generator'
-
-  # This version is pinned exactly to ensure that upgrades don't break the
-  # gnarly `module_eval` hack in lib/logstash/outputs/dogstatsd.rb.
-  s.add_runtime_dependency 'dogstatsd-ruby', '= 1.6'
+  s.add_runtime_dependency 'dogstatsd-ruby', '= 2.2'
 
   s.add_development_dependency 'logstash-devutils'
   s.add_development_dependency 'overcommit'
