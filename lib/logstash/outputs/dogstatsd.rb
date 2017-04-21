@@ -2,27 +2,6 @@
 require "logstash/outputs/base"
 require "logstash/namespace"
 require "datadog/statsd"
-# This is a hack to load the dogstatsd-ruby gem's statsd.rb file into a
-# namespace so as to not clobber the top-level Statsd provided by the
-# much-more-popular Statsd gem. The problem is that both gems have a file named
-# 'statsd.rb' that you are supposed to load. Why did Datadog not name their file
-# differently? Who knows!
-# (see: https://github.com/DataDog/dogstatsd-ruby/pull/3)
-
-# dogstatsd is a fork of the statsd protocol which aggregates statistics, such
-# as counters and timers, and ships them over UDP to the dogstatsd-server
-# running as part of the Datadog Agent. Dogstatsd adds support for metric tags,
-# which are used to slice metrics along various dimensions.
-#
-# You can learn about statsd here:
-#
-# * https://codeascraft.com/2011/02/15/measure-anything-measure-everything/[Etsy blog post announcing statsd]
-# * https://github.com/etsy/statsd[statsd on github]
-#
-# Typical examples of how this can be used with Logstash include counting HTTP hits
-# by response code, summing the total number of bytes of traffic served, and tracking
-# the 50th and 95th percentile of the processing time of requests.
-#
 # Example:
 # [source,ruby]
 # output {
@@ -33,9 +12,11 @@ require "datadog/statsd"
 #     }
 #   }
 # }
+
 class LogStash::Outputs::Dogstatsd < LogStash::Outputs::Base
   ## Regex stolen from statsd code
   RESERVED_CHARACTERS_REGEX = /[\:\|\@]/
+
   config_name "dogstatsd"
 
   # The hostname or IP address of the dogstatsd server.
@@ -78,15 +59,18 @@ class LogStash::Outputs::Dogstatsd < LogStash::Outputs::Base
   public
   def register
     @client = Datadog::Statsd.new(@host, @port)
-  end # def register
+  end
 
   public
   def receive(event)
     @logger.debug? and @logger.debug("Event: #{event}")
 
+    tags = with_default(@metric_tags, []) + with_default(event.get("metric_tags"), [])
+    sample_rate = with_default(event.get("sample_rate"), @sample_rate)
+
     metric_opts = {
-      :sample_rate => @sample_rate,
-      :tags => @metric_tags.collect { |t| event.sprintf(t) }
+      :sample_rate=> sample_rate,
+      :tags => tags.collect { |t| event.sprintf(t) }
     }
 
     @increment.each do |metric|
@@ -112,10 +96,17 @@ class LogStash::Outputs::Dogstatsd < LogStash::Outputs::Base
     @gauge.each do |metric, val|
       @client.gauge(event.sprintf(metric), event.sprintf(val), metric_opts)
     end
-  end # def receive
+
+    return true
+  end
 
   public
   def close
     @client.close
-  end # def close
-end # class LogStash::Outputs::Statsd
+  end
+
+  private
+  def with_default(target ,default)
+    (target || default)
+  end
+end

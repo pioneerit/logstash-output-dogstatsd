@@ -1,3 +1,6 @@
+# 2.1.0
+- Support globally defined tags and metric defined tags.
+
 # 2.0.0
 - Updates from logstash-output-statsd v2.0.5.
 - Upgraded logstash-core dependency to 2.0.
