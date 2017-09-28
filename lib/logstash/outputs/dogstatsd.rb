@@ -56,6 +56,9 @@ class LogStash::Outputs::Dogstatsd < LogStash::Outputs::Base
   # The tags to apply to each metric.
   config :metric_tags, :validate => :array, :default => []
 
+  # Boolean: Add tags from the logstash event if True
+  config :forward_tags, :validate => :boolean, :default => false
+
   public
   def register
     @client = Datadog::Statsd.new(@host, @port)
@@ -65,7 +68,11 @@ class LogStash::Outputs::Dogstatsd < LogStash::Outputs::Base
   def receive(event)
     @logger.debug? and @logger.debug("Event: #{event}")
 
-    tags = with_default(@metric_tags, []) + with_default(event.get("metric_tags"), [])
+    if @forward_tags
+      tags = with_default(@metric_tags, []) + with_default(event.get("metric_tags"), [])
+    else
+      tags = with_default(@metric_tags, [])
+    end
     sample_rate = with_default(event.get("sample_rate"), @sample_rate)
 
     metric_opts = {
@@ -74,27 +81,27 @@ class LogStash::Outputs::Dogstatsd < LogStash::Outputs::Base
     }
 
     @increment.each do |metric|
-      @client.increment(event.sprintf(metric), metric_opts)
+      @client.increment(build_stat(event.sprintf(metric)), metric_opts)
     end
 
     @decrement.each do |metric|
-      @client.decrement(event.sprintf(metric), metric_opts)
+      @client.decrement(build_stat(event.sprintf(metric)), metric_opts)
     end
 
     @count.each do |metric, val|
-      @client.count(event.sprintf(metric), event.sprintf(val), metric_opts)
+      @client.count(build_stat(event.sprintf(metric)), event.sprintf(val), metric_opts)
     end
 
     @histogram.each do |metric, val|
-      @client.histogram(event.sprintf(metric), event.sprintf(val), metric_opts)
+      @client.histogram(build_stat(event.sprintf(metric)), event.sprintf(val), metric_opts)
     end
 
     @set.each do |metric, val|
-      @client.set(event.sprintf(metric), event.sprintf(val), metric_opts)
+      @client.set(build_stat(event.sprintf(metric)), event.sprintf(val), metric_opts)
     end
 
     @gauge.each do |metric, val|
-      @client.gauge(event.sprintf(metric), event.sprintf(val), metric_opts)
+      @client.gauge(build_stat(event.sprintf(metric)), event.sprintf(val), metric_opts)
     end
 
     return true
@@ -108,5 +115,12 @@ class LogStash::Outputs::Dogstatsd < LogStash::Outputs::Base
   private
   def with_default(target ,default)
     (target || default)
+  end
+
+  def build_stat(metric)
+    metric = metric.to_s.gsub('::','.')
+    metric.gsub!(RESERVED_CHARACTERS_REGEX, '_')
+    @logger.debug? and @logger.debug("Formatted value", :metric => metric)
+    return "#{metric}"
   end
 end
