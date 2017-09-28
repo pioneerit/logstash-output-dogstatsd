@@ -1,67 +1,125 @@
 # encoding: utf-8
-require 'logstash/outputs/dogstatsd'
-require_relative '../spec_helper'
+require "logstash/devutils/rspec/spec_helper"
+require "logstash/outputs/dogstatsd"
+require "logstash/codecs/plain"
+require "logstash/event"
+require_relative "../spec_helper"
 
 describe LogStash::Outputs::Dogstatsd do
-  let(:output) { described_class.new(config) }
+  let(:host) { "127.0.0.1" }
+  let(:port) { rand(2000..10000) }
 
-  let(:config) do
-    {
-      'host' => '127.0.0.1',
-      'port' => 8125
-    }.merge(metric_config)
-  end
-  let(:metric_config) { {} }
-
-  describe 'registration and close' do
-    it 'registers without errors' do
-      output = LogStash::Plugin.lookup('output', 'dogstatsd').new
-      expect { output.register }.to_not raise_error
-    end
+  let(:base) do
+    { "host" => host, "port" => port }
   end
 
-  describe '#send' do
-    before { output.register }
-    subject { output.receive(LogStash::Event.new(event)) }
+  let!(:server) { StatsdServer.new.run(port) }
 
-    let(:event) { { 'something_count' => 10 } }
+  after(:each) do
+    server.close
+  end
 
-    context 'increment metrics' do
-      let(:metric_config) { { 'increment' => [metric_to_track] } }
-      let(:metric_to_track) { 'metric.name.here' }
+  describe "setup" do
+    let(:event) { LogStash::Event.new }
+    let(:output) { described_class.new(base) }
 
-      context 'with a plain ol metric name' do
-        it 'tracks' do
-          expect_any_instance_of(Datadog::Statsd).to receive(:send_to_socket)
-            .with("#{metric_to_track}:1|c")
-          subject
-        end
-      end
-
-      context 'with tags' do
-        let(:metric_config) { super().merge('metric_tags' => ['foo:%{value}']) }
-        let(:event) { { 'value' => 'helloworld' } }
-
-        it 'sprintf tags' do
-          expect_any_instance_of(Datadog::Statsd).to receive(:send_to_socket)
-            .with("#{metric_to_track}:1|c|#foo:helloworld")
-          subject
-        end
+    describe "registration and close" do
+      it "should register without errors" do
+        output = LogStash::Plugin.lookup("output", "dogstatsd").new
+        expect { output.register }.to_not raise_error
       end
     end
 
-    context 'histogram metrics' do
-      let(:metric_to_track) { 'metric.name.here' }
-      let(:metric_config) { { 'histogram' => { '%{metric_name}' => '%{track_value}' } } }
-      let(:event) { super().merge('metric_name' => metric_to_track, 'track_value' => 123) }
+    describe "receive message" do
+      before do
+        output.register
+      end
 
-      context 'with event fields in the metric name and value' do
-        it 'tracks' do
-          expect_any_instance_of(Datadog::Statsd).to receive(:send_to_socket)
-            .with("#{metric_to_track}:123|h")
-          subject
-        end
+      subject { output.receive(event) }
+
+      it "returns true" do
+        expect(subject).to eq(true)
       end
     end
+  end
+
+  describe "#receive" do
+    let(:event) { LogStash::Event.new(properties) }
+    subject { described_class.new(config) }
+
+    before(:each) do
+      subject.register
+    end
+
+    [ "increment", "decrement" ].each do |type|
+      context "#{type} metrics" do
+        let(:name) { "foo" }
+        let(:value) { type === "increment" ? 1 : -1 }
+
+        let(:config) do
+          base.merge({ type => [ "%{metric_name}" ] })
+        end
+
+        let(:properties) do
+          { "metric_name" => name }
+        end
+
+        it "should receive data send to the server" do
+          subject.receive(event)
+
+          try {
+            expect(server.received).to include("#{name}:#{value}|c")
+          }
+        end
+
+        context "#{type} metrics with tags" do
+          let(:config_tags) { [ "host:server123" ] }
+          let(:event_tags) { [ "env:test" ] }
+
+          let(:config) do
+            base.merge({ type => [ "%{metric_name}"] , "metric_tags" => config_tags })
+          end
+
+          let(:properties) do
+            { "metric_name" => name, "metric_tags" => event_tags  }
+          end
+
+          it "should receive data send to the server" do
+            subject.receive(event)
+
+            try {
+              tag_string = (config_tags + event_tags).join(',')
+              expect(server.received).to include("#{name}:#{value}|c|##{tag_string}")
+            }
+          end
+        end
+
+      end
+    end
+
+    [ "count", "gauge", "histogram", "set" ].each do |type|
+      context "#{type} metrics" do
+        let(:name) { "foo.bar" }
+        let(:value) { rand(2000..10000) }
+        let(:t) { type[0] }
+
+        let(:config) do
+          base.merge({ type => { "%{metric_name}" => "%{metric_value}" } })
+        end
+
+        let(:properties) do
+          { "metric_name" => name, "metric_value" => value }
+        end
+
+        it "should receive data send to the server" do
+          subject.receive(event)
+          try {
+            expect(server.received).to include("#{name}:#{value}|#{t}")
+          }
+        end
+
+      end
+    end
+
   end
 end
